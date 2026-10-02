@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TextZoom</title>
+<style>
+:root {
+  --bg: #f6f4ef; --panel: #fffdf8; --ink: #23211d; --muted: #857f73; --line: #e2ddd0;
+  --accent: #b4572b; --band-a: #c9b68a; --band-b: #9db3a6; --hot: #e08a4f;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a; --panel: #1f2023; --ink: #e6e2d8; --muted: #8d8a82; --line: #33353a;
+    --accent: #e39a6b; --band-a: #7a6a42; --band-b: #4c665a; --hot: #e08a4f;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  display: grid; grid-template-rows: auto 1fr;
+}
+header.top { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+header.top h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+header.top .hint { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1; }
+button {
+  font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .35; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.icon { width: 30px; padding: 4px 0; font-size: 16px; line-height: 1; }
+
+main { display: grid; grid-template-columns: 1fr 72px 1fr; grid-template-rows: auto 1fr; min-height: 0; }
+.phead {
+  display: flex; align-items: center; gap: 8px; padding: 6px 16px; min-height: 42px;
+  border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px;
+}
+.phead strong { color: var(--ink); font-size: 13px; }
+.ghead { border-bottom: 1px solid var(--line); }
+.scroll { overflow-y: auto; position: relative; min-height: 0; background: var(--panel); padding: 12px 0 40vh; }
+#gutter { width: 100%; height: 100%; display: block; }
+#gutter path { fill-opacity: .28; stroke-opacity: .7; stroke-width: 1; }
+#gutter path.a { fill: var(--band-a); stroke: var(--band-a); }
+#gutter path.b { fill: var(--band-b); stroke: var(--band-b); }
+#gutter path.hot { fill: var(--hot); stroke: var(--hot); fill-opacity: .5; stroke-opacity: 1; }
+
+.para, .block {
+  font: 16px/1.55 Charter, "Iowan Old Style", Georgia, serif;
+  margin: 0 0 6px; padding: 6px 18px; border: 0 solid transparent;
+}
+.para { border-right-width: 3px; white-space: pre-wrap; }
+.block { border-left-width: 3px; }
+.para.a, .block.a { border-color: var(--band-a); }
+.para.b, .block.b { border-color: var(--band-b); }
+.para.hot, .block.hot { border-color: var(--hot); background: color-mix(in srgb, var(--hot) 10%, transparent); }
+.block p { margin: 0 0 .4em; }
+.block ul { margin: 0; padding-left: 1.1em; }
+.block > :last-child { margin-bottom: 0; }
+
+#editor {
+  display: none; width: 100%; height: 100%; resize: none; border: 0; outline: 0; padding: 16px 18px;
+  background: var(--panel); color: var(--ink); font: 15px/1.5 Charter, Georgia, serif;
+}
+body.editing #editor { display: block; }
+body.editing #left { display: none; }
+.leftwrap { min-height: 0; display: grid; }
+.msg { padding: 40px 24px; color: var(--muted); text-align: center; }
+.msg.err { color: #c0392b; }
+.msg button { margin-top: 12px; }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.dots { display: flex; gap: 4px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); cursor: pointer; }
+.dots i.cached { background: var(--muted); }
+.dots i.on { background: var(--accent); }
+
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); width: min(640px, 92vw); padding: 20px; }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h2 { margin: 0 0 12px; font-size: 16px; }
+dialog label { display: block; margin: 12px 0 4px; font-size: 12px; color: var(--muted); }
+dialog input, dialog textarea {
+  width: 100%; font: 13px/1.4 ui-monospace, Menlo, monospace; padding: 7px 9px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink);
+}
+dialog textarea { height: 170px; resize: vertical; }
+dialog .row { display: flex; gap: 8px; margin-top: 16px; }
+dialog small { color: var(--muted); }
+</style>
+</head>
+<body class="editing">
+<header class="top">
+  <h1>TextZoom</h1>
+  <span class="hint">+ / − to zoom</span>
+  <span class="spacer"></span>
+  <button id="btnSettings">⚙ Settings</button>
+</header>
+
+<main>
+  <div class="phead">
+    <strong>Original</strong><span id="leftInfo"></span>
+    <span class="spacer"></span>
+    <button id="btnEdit" class="primary">Compress</button>
+  </div>
+  <div class="ghead"></div>
+  <div class="phead">
+    <strong id="levelName"></strong><span id="rightInfo"></span>
+    <span class="spacer"></span>
+    <div class="dots" id="dots"></div>
+    <button id="btnRegen" class="icon" title="Regenerate this level">↻</button>
+    <button id="btnIn" class="icon" title="Zoom in: more detail (+)">+</button>
+    <button id="btnOut" class="icon" title="Zoom out: more compression (−)">−</button>
+  </div>
+
+  <div class="leftwrap">
+    <textarea id="editor" placeholder="Paste text here, then press Compress (⌘/Ctrl+Enter). Paragraphs are separated by blank lines."></textarea>
+    <div class="scroll" id="left"></div>
+  </div>
+  <svg id="gutter"></svg>
+  <div class="scroll" id="right"></div>
+</main>
+
+<dialog id="settings">
+  <h2>Settings</h2>
+  <label>OpenRouter API key</label>
+  <input id="setKey" type="password" placeholder="sk-or-…" autocomplete="off">
+  <small>Stored only in this browser's localStorage and sent only to openrouter.ai.</small>
+  <label>Model</label>
+  <input id="setModel" placeholder="anthropic/claude-sonnet-4.5">
+  <label>System prompt</label>
+  <textarea id="setPrompt"></textarea>
+  <div class="row">
+    <button id="setReset">Reset prompt</button>
+    <span class="spacer"></span>
+    <button id="setCancel">Cancel</button>
+    <button id="setSave" class="primary">Save</button>
+  </div>
+</dialog>
+
+<script>
+const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
+const DEFAULT_PROMPT = `You compress texts for fast reading.
+Stay faithful to the source: add nothing new, keep names, numbers and concrete claims, drop filler and repetition.
+Write in the language of the source text, in a plain direct style, and keep the original order.
+Headings and very short paragraphs may be kept as they are.`;
+
+// Fixed output contract, appended to every request so editing the system prompt can't break parsing.
+const FORMAT = `Output format: respond with JSON only, no code fences and no commentary:
+{"blocks":[{"src":[first,last],"text":"..."}]}
+"src" is the inclusive range of source paragraph numbers the block covers (first = last for a single paragraph).
+Blocks must be in source order, must not overlap, and together must cover every paragraph.`;
+
+const LEVELS = [
+  { name: 'Original' },
+  { name: 'Tighter', instr: 'Rewrite each paragraph more concisely, at roughly half its length, keeping every substantive point. Exactly one block per source paragraph.' },
+  { name: 'Bullets', instr: 'Turn each paragraph into 1-3 terse bullet points. Exactly one block per source paragraph; put each bullet on its own line starting with "- ".' },
+  { name: 'One-liners', instr: 'Write one short sentence per source paragraph capturing its main point. Exactly one block per source paragraph.' },
+  { name: 'Sections', instr: 'Group adjacent paragraphs that belong together (typically 2-5 per group) and write one short sentence per group. One block per group.' },
+  { name: 'Gist', instr: 'Summarise the whole text in 3-5 sentences in total. Each sentence is one block covering a contiguous range of paragraphs.' },
+];
+
+const $ = id => document.getElementById(id);
+const left = $('left'), right = $('right'), gutter = $('gutter'), editor = $('editor');
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+let settings = Object.assign({ key: '', model: DEFAULT_MODEL, prompt: DEFAULT_PROMPT }, load('tz.settings', {}));
+let doc = Object.assign({ text: '', level: 2, cache: {} }, load('tz.doc', {}));
+let paras = [], blocks = [], pEls = [], bEls = [], bandEls = [], map = [];
+let gen = 0;               // bumped whenever cached results become stale
+const pending = {};        // level -> generation of the in-flight request
+
+const words = s => (s.match(/\S+/g) || []).length;
+const saveDoc = () => save('tz.doc', doc);
+
+function splitParas(text) {
+  let ps = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  if (ps.length === 1) ps = text.split(/\n/).map(s => s.trim()).filter(Boolean);
+  return ps;
+}
+
+// ---------- rendering ----------
+
+function renderLeft() {
+  left.textContent = '';
+  pEls = paras.map(p => {
+    const el = document.createElement('div');
+    el.className = 'para';
+    el.textContent = p;
+    left.append(el);
+    return el;
+  });
+  $('leftInfo').textContent = paras.length ? `${paras.length} paragraphs · ${words(doc.text)} words` : '';
+}
+
+function blockBody(el, text) {
+  let ul = null;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^[-*•]\s+(.*)$/);
+    if (m) {
+      if (!ul) el.append(ul = document.createElement('ul'));
+      const li = document.createElement('li');
+      li.textContent = m[1];
+      ul.append(li);
+    } else {
+      ul = null;
+      const p = document.createElement('p');
+      p.textContent = line;
+      el.append(p);
+    }
+  }
+}
+
+function renderRight(bs) {
+  blocks = bs;
+  right.textContent = '';
+  gutter.textContent = '';
+  pEls.forEach(p => { p.classList.remove('a', 'b', 'hot'); delete p.dataset.block; });
+  bEls = []; bandEls = [];
+  blocks.forEach((b, i) => {
+    const tint = i % 2 ? 'b' : 'a';
+    const el = document.createElement('div');
+    el.className = 'block ' + tint;
+    blockBody(el, b.text);
+    el.addEventListener('mouseenter', () => hot(i, true));
+    el.addEventListener('mouseleave', () => hot(i, false));
+    right.append(el);
+    bEls.push(el);
+    for (let k = b.src[0]; k <= b.src[1]; k++) {
+      pEls[k - 1].classList.add(tint);
+      pEls[k - 1].dataset.block = i;
+    }
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', tint);
+    gutter.append(path);
+    bandEls.push(path);
+  });
+  const out = words(blocks.map(b => b.text).join(' ')), src = words(doc.text) || 1;
+  $('rightInfo').textContent = `${out} words · ${Math.round(out / src * 100)}%`;
+  relayout();
+  sync(left, right);
+}
+
+function renderMsg(text, { err, spinner, action } = {}) {
+  blocks = []; bEls = []; bandEls = [];
+  gutter.textContent = '';
+  right.textContent = '';
+  pEls.forEach(p => p.classList.remove('a', 'b', 'hot'));
+  $('rightInfo').textContent = '';
+  const el = document.createElement('div');
+  el.className = 'msg' + (err ? ' err' : '');
+  if (spinner) { const s = document.createElement('span'); s.className = 'spin'; el.append(s); }
+  el.append(text);
+  if (action) {
+    const b = document.createElement('button');
+    b.textContent = action[0];
+    b.onclick = action[1];
+    el.append(document.createElement('br'), b);
+  }
+  right.append(el);
+}
+
+function hot(i, on) {
+  if (!blocks[i]) return;
+  bEls[i].classList.toggle('hot', on);
+  bandEls[i].classList.toggle('hot', on);
+  for (let k = blocks[i].src[0]; k <= blocks[i].src[1]; k++) pEls[k - 1].classList.toggle('hot', on);
+}
+left.addEventListener('mouseover', e => {
+  const p = e.target.closest('.para');
+  if (p && p.dataset.block !== undefined) hot(+p.dataset.block, true);
+});
+left.addEventListener('mouseout', e => {
+  const p = e.target.closest('.para');
+  if (p && p.dataset.block !== undefined) hot(+p.dataset.block, false);
+});
+
+function renderHead() {
+  $('levelName').textContent = LEVELS[doc.level].name;
+  $('btnIn').disabled = doc.level === 0;
+  $('btnOut').disabled = doc.level === LEVELS.length - 1;
+  $('btnRegen').disabled = doc.level === 0 || !paras.length;
+  $('dots').textContent = '';
+  LEVELS.forEach((l, i) => {
+    const d = document.createElement('i');
+    d.title = l.name;
+    d.className = (i === doc.level ? 'on' : '') + (i === 0 || doc.cache[i] ? ' cached' : '');
+    d.onclick = () => setLevel(i);
+    $('dots').append(d);
+  });
+}
+
+// ---------- connectors + scroll sync ----------
+
+// Piecewise-linear map between left and right content coordinates, anchored on block edges.
+function buildMap() {
+  map = [[0, 0]];
+  blocks.forEach((b, i) => {
+    const a = pEls[b.src[0] - 1], z = pEls[b.src[1] - 1], r = bEls[i];
+    map.push([a.offsetTop, r.offsetTop], [z.offsetTop + z.offsetHeight, r.offsetTop + r.offsetHeight]);
+  });
+  map.push([left.scrollHeight, right.scrollHeight]);
+  for (let i = 1; i < map.length; i++) {
+    map[i][0] = Math.max(map[i][0], map[i - 1][0]);
+    map[i][1] = Math.max(map[i][1], map[i - 1][1]);
+  }
+}
+
+function interp(v, from, to) {
+  for (let i = 1; i < map.length; i++) {
+    if (v <= map[i][from]) {
+      const span = map[i][from] - map[i - 1][from];
+      const t = span > 0 ? (v - map[i - 1][from]) / span : 0;
+      return map[i - 1][to] + t * (map[i][to] - map[i - 1][to]);
+    }
+  }
+  return map[map.length - 1][to];
+}
+
+// The alignment line slides from the top of the viewport to the bottom as the panel scrolls,
+// so both panels reach their start and end together even when their lengths differ a lot.
+const expected = new WeakMap();
+function sync(src, dst) {
+  if (!blocks.length) return;
+  const from = src === left ? 0 : 1, to = 1 - from;
+  const maxS = src.scrollHeight - src.clientHeight;
+  const f = maxS > 0 ? src.scrollTop / maxS : 0;
+  const y = interp(src.scrollTop + f * src.clientHeight, from, to);
+  const maxD = dst.scrollHeight - dst.clientHeight;
+  const s = maxD > 0 ? Math.max(0, Math.min(maxD, y / (1 + dst.clientHeight / maxD))) : 0;
+  expected.set(dst, Math.round(s));
+  dst.scrollTop = s;
+  queueDraw();
+}
+function onScroll(src, dst) {
+  src.addEventListener('scroll', () => {
+    // ignore the echo of our own programmatic scroll
+    if (expected.has(src) && Math.abs(src.scrollTop - expected.get(src)) <= 1) { queueDraw(); return; }
+    expected.delete(src);
+    sync(src, dst);
+  }, { passive: true });
+}
+onScroll(left, right);
+onScroll(right, left);
+
+let drawQueued = false;
+function queueDraw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => { drawQueued = false; draw(); });
+}
+function draw() {
+  if (!blocks.length) return;
+  const g = gutter.getBoundingClientRect(), w = g.width, c = w / 2;
+  blocks.forEach((b, i) => {
+    const a = pEls[b.src[0] - 1].getBoundingClientRect(), z = pEls[b.src[1] - 1].getBoundingClientRect();
+    const r = bEls[i].getBoundingClientRect();
+    const l1 = a.top - g.top, l2 = z.bottom - g.top, r1 = r.top - g.top, r2 = r.bottom - g.top;
+    if (Math.max(l2, r2) < 0 || Math.min(l1, r1) > g.height) { bandEls[i].setAttribute('d', ''); return; }
+    bandEls[i].setAttribute('d',
+      `M0,${l1} C${c},${l1} ${c},${r1} ${w},${r1} L${w},${r2} C${c},${r2} ${c},${l2} 0,${l2} Z`);
+  });
+}
+function relayout() {
+  if (!blocks.length) return;
+  buildMap();
+  queueDraw();
+}
+new ResizeObserver(() => { relayout(); sync(left, right); }).observe(document.querySelector('main'));
+
+// ---------- OpenRouter ----------
+
+function normalise(raw) {
+  const n = paras.length;
+  let prev = 1;
+  const out = [];
+  for (const b of Array.isArray(raw) ? raw : []) {
+    if (!b || typeof b.text !== 'string' || !b.text.trim()) continue;
+    const src = Array.isArray(b.src) ? b.src : [b.src, b.src];
+    let s = Math.round(+src[0]), e = Math.round(+(src[1] ?? src[0]));
+    if (!Number.isFinite(s)) s = prev;
+    if (!Number.isFinite(e)) e = s;
+    s = Math.min(n, Math.max(prev, s));
+    e = Math.min(n, Math.max(s, e));
+    out.push({ src: [s, e], text: b.text.trim() });
+    prev = s;
+  }
+  if (!out.length) throw new Error('The model returned no usable blocks.');
+  return out;
+}
+
+async function compress(level) {
+  const user = `Instruction: ${LEVELS[level].instr}\n\n${FORMAT}\n\nText:\n\n` +
+    paras.map((p, i) => `[${i + 1}] ${p}`).join('\n\n');
+  const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${settings.key}`, 'Content-Type': 'application/json', 'X-Title': 'TextZoom' },
+    body: JSON.stringify({
+      model: settings.model || DEFAULT_MODEL,
+      temperature: 0.2,
+      messages: [{ role: 'system', content: settings.prompt }, { role: 'user', content: user }],
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error?.message || `OpenRouter returned HTTP ${res.status}`);
+  const content = data.choices?.[0]?.message?.content || '';
+  const a = content.indexOf('{'), z = content.lastIndexOf('}');
+  if (a < 0 || z < a) throw new Error('The model did not return JSON.');
+  let parsed;
+  try { parsed = JSON.parse(content.slice(a, z + 1)); }
+  catch { throw new Error('Could not parse the model output (it may have been cut off).'); }
+  return normalise(parsed.blocks);
+}
+
+async function show() {
+  renderHead();
+  saveDoc();
+  if (!paras.length) return;
+  const level = doc.level;
+  if (level === 0) return renderRight(paras.map((p, i) => ({ src: [i + 1, i + 1], text: p })));
+  if (doc.cache[level]) return renderRight(doc.cache[level]);
+  if (!settings.key) return renderMsg('Add your OpenRouter API key to compress text.', { action: ['Open settings', openSettings] });
+  renderMsg(`Compressing to “${LEVELS[level].name}”…`, { spinner: true });
+  if (pending[level] === gen) return;
+  const mine = pending[level] = gen;
+  try {
+    const bs = await compress(level);
+    if (mine !== gen) return;
+    doc.cache[level] = bs;
+    saveDoc();
+    renderHead();
+    if (doc.level === level && !document.body.classList.contains('editing')) renderRight(bs);
+  } catch (e) {
+    if (mine === gen && doc.level === level) renderMsg(e.message, { err: true, action: ['Retry', show] });
+  } finally {
+    if (pending[level] === mine) delete pending[level];
+  }
+}
+
+// ---------- controls ----------
+
+function setLevel(l) {
+  l = Math.max(0, Math.min(LEVELS.length - 1, l));
+  if (l === doc.level) return;
+  doc.level = l;
+  if (document.body.classList.contains('editing')) { renderHead(); saveDoc(); } else show();
+}
+function invalidate() { doc.cache = {}; gen++; }
+
+function toggleEdit() {
+  const editing = document.body.classList.toggle('editing');
+  $('btnEdit').textContent = editing ? 'Compress' : 'Edit text';
+  $('btnEdit').classList.toggle('primary', editing);
+  if (editing) {
+    editor.value = doc.text;
+    renderMsg('The compressed text will appear here.');
+    $('leftInfo').textContent = '';
+    renderHead();
+    editor.focus();
+    return;
+  }
+  const text = editor.value.trim();
+  if (!text) { toggleEdit(); return; }
+  if (text !== doc.text) { doc.text = text; invalidate(); }
+  paras = splitParas(doc.text);
+  renderLeft();
+  left.scrollTop = 0;
+  show();
+}
+$('btnEdit').onclick = toggleEdit;
+$('btnIn').onclick = () => setLevel(doc.level - 1);
+$('btnOut').onclick = () => setLevel(doc.level + 1);
+$('btnRegen').onclick = () => { delete doc.cache[doc.level]; show(); };
+
+document.addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && document.body.classList.contains('editing')) { toggleEdit(); return; }
+  if (e.target.matches('input, textarea') || e.metaKey || e.ctrlKey || e.altKey || $('settings').open) return;
+  if (e.key === '+' || e.key === '=') setLevel(doc.level - 1);
+  else if (e.key === '-' || e.key === '_') setLevel(doc.level + 1);
+});
+
+function openSettings() {
+  $('setKey').value = settings.key;
+  $('setModel').value = settings.model;
+  $('setPrompt').value = settings.prompt;
+  $('settings').showModal();
+}
+$('btnSettings').onclick = openSettings;
+$('setCancel').onclick = () => $('settings').close();
+$('setReset').onclick = () => { $('setPrompt').value = DEFAULT_PROMPT; };
+$('setSave').onclick = () => {
+  const next = {
+    key: $('setKey').value.trim(),
+    model: $('setModel').value.trim() || DEFAULT_MODEL,
+    prompt: $('setPrompt').value.trim() || DEFAULT_PROMPT,
+  };
+  if (next.model !== settings.model || next.prompt !== settings.prompt) invalidate();
+  settings = next;
+  save('tz.settings', settings);
+  $('settings').close();
+  if (!document.body.classList.contains('editing')) show();
+};
+
+// ---------- boot ----------
+editor.value = doc.text;
+renderHead();
+renderMsg('The compressed text will appear here.');
+if (doc.text) toggleEdit();
+</script>
+</body>
+</html>
