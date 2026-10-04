@@ -20,7 +20,7 @@ html, body { height: 100%; margin: 0; }
 body {
   background: var(--bg); color: var(--ink);
   font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  display: grid; grid-template-rows: auto 1fr;
+  display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr);
 }
 header.top { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
 header.top h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
@@ -53,8 +53,8 @@ main { display: grid; grid-template-columns: 1fr 72px 1fr; grid-template-rows: a
   font: 16px/1.55 Charter, "Iowan Old Style", Georgia, serif;
   margin: 0 0 6px; padding: 6px 18px; border: 0 solid transparent;
 }
-.para { border-right-width: 3px; white-space: pre-wrap; }
-.block { border-left-width: 3px; }
+.para { border-left-width: 3px; white-space: pre-wrap; }
+.block { border-right-width: 3px; }
 .para.a, .block.a { border-color: var(--band-a); }
 .para.b, .block.b { border-color: var(--band-b); }
 .para.hot, .block.hot { border-color: var(--hot); background: color-mix(in srgb, var(--hot) 10%, transparent); }
@@ -67,8 +67,8 @@ main { display: grid; grid-template-columns: 1fr 72px 1fr; grid-template-rows: a
   background: var(--panel); color: var(--ink); font: 15px/1.5 Charter, Georgia, serif;
 }
 body.editing #editor { display: block; }
-body.editing #left { display: none; }
-.leftwrap { min-height: 0; display: grid; }
+body.editing #orig { display: none; }
+.origwrap { min-height: 0; display: grid; }
 .msg { padding: 40px 24px; color: var(--muted); text-align: center; }
 .msg.err { color: #c0392b; }
 .msg button { margin-top: 12px; }
@@ -91,6 +91,18 @@ dialog input, dialog textarea {
 dialog textarea { height: 170px; resize: vertical; }
 dialog .row { display: flex; gap: 8px; margin-top: 16px; }
 dialog small { color: var(--muted); }
+
+/* Phone: one panel at a time; the connector strip stays docked at the edge (widths are set from JS). */
+@media (max-width: 720px) {
+  html, body { overflow: hidden; }
+  body { height: 100dvh; }
+  header.top .hint, .dots { display: none; }
+  main, main * { touch-action: pan-y; }
+  main { will-change: transform; }
+  .phead { padding: 6px 10px; }
+  .para, .block { padding: 6px 12px; }
+  #gutter { cursor: pointer; }
+}
 </style>
 </head>
 <body class="editing">
@@ -101,28 +113,28 @@ dialog small { color: var(--muted); }
   <button id="btnSettings">⚙ Settings</button>
 </header>
 
-<main>
+<main id="main">
   <div class="phead">
-    <strong>Original</strong><span id="leftInfo"></span>
-    <span class="spacer"></span>
-    <button id="btnEdit" class="primary">Compress</button>
-  </div>
-  <div class="ghead"></div>
-  <div class="phead">
-    <strong id="levelName"></strong><span id="rightInfo"></span>
+    <strong id="levelName"></strong><span id="compInfo"></span>
     <span class="spacer"></span>
     <div class="dots" id="dots"></div>
     <button id="btnRegen" class="icon" title="Regenerate this level">↻</button>
     <button id="btnIn" class="icon" title="Zoom in: more detail (+)">+</button>
     <button id="btnOut" class="icon" title="Zoom out: more compression (−)">−</button>
   </div>
-
-  <div class="leftwrap">
-    <textarea id="editor" placeholder="Paste text here, then press Compress (⌘/Ctrl+Enter). Paragraphs are separated by blank lines."></textarea>
-    <div class="scroll" id="left"></div>
+  <div class="ghead"></div>
+  <div class="phead">
+    <strong>Original</strong><span id="origInfo"></span>
+    <span class="spacer"></span>
+    <button id="btnEdit" class="primary">Compress</button>
   </div>
+
+  <div class="scroll" id="comp"></div>
   <svg id="gutter"></svg>
-  <div class="scroll" id="right"></div>
+  <div class="origwrap">
+    <textarea id="editor" placeholder="Paste text here, then press Compress (⌘/Ctrl+Enter). Paragraphs are separated by blank lines."></textarea>
+    <div class="scroll" id="orig"></div>
+  </div>
 </main>
 
 <dialog id="settings">
@@ -165,7 +177,7 @@ const LEVELS = [
 ];
 
 const $ = id => document.getElementById(id);
-const left = $('left'), right = $('right'), gutter = $('gutter'), editor = $('editor');
+const orig = $('orig'), comp = $('comp'), main = $('main'), gutter = $('gutter'), editor = $('editor');
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
@@ -186,16 +198,16 @@ function splitParas(text) {
 
 // ---------- rendering ----------
 
-function renderLeft() {
-  left.textContent = '';
+function renderOrig() {
+  orig.textContent = '';
   pEls = paras.map(p => {
     const el = document.createElement('div');
     el.className = 'para';
     el.textContent = p;
-    left.append(el);
+    orig.append(el);
     return el;
   });
-  $('leftInfo').textContent = paras.length ? `${paras.length} paragraphs · ${words(doc.text)} words` : '';
+  $('origInfo').textContent = paras.length ? `${paras.length} paragraphs · ${words(doc.text)} words` : '';
 }
 
 function blockBody(el, text) {
@@ -218,9 +230,9 @@ function blockBody(el, text) {
   }
 }
 
-function renderRight(bs) {
+function renderComp(bs) {
   blocks = bs;
-  right.textContent = '';
+  comp.textContent = '';
   gutter.textContent = '';
   pEls.forEach(p => { p.classList.remove('a', 'b', 'hot'); delete p.dataset.block; });
   bEls = []; bandEls = [];
@@ -231,7 +243,7 @@ function renderRight(bs) {
     blockBody(el, b.text);
     el.addEventListener('mouseenter', () => hot(i, true));
     el.addEventListener('mouseleave', () => hot(i, false));
-    right.append(el);
+    comp.append(el);
     bEls.push(el);
     for (let k = b.src[0]; k <= b.src[1]; k++) {
       pEls[k - 1].classList.add(tint);
@@ -243,17 +255,17 @@ function renderRight(bs) {
     bandEls.push(path);
   });
   const out = words(blocks.map(b => b.text).join(' ')), src = words(doc.text) || 1;
-  $('rightInfo').textContent = `${out} words · ${Math.round(out / src * 100)}%`;
+  $('compInfo').textContent = `${out} words · ${Math.round(out / src * 100)}%`;
   relayout();
-  sync(left, right);
+  sync(orig, comp);
 }
 
 function renderMsg(text, { err, spinner, action } = {}) {
   blocks = []; bEls = []; bandEls = [];
   gutter.textContent = '';
-  right.textContent = '';
+  comp.textContent = '';
   pEls.forEach(p => p.classList.remove('a', 'b', 'hot'));
-  $('rightInfo').textContent = '';
+  $('compInfo').textContent = '';
   const el = document.createElement('div');
   el.className = 'msg' + (err ? ' err' : '');
   if (spinner) { const s = document.createElement('span'); s.className = 'spin'; el.append(s); }
@@ -264,7 +276,7 @@ function renderMsg(text, { err, spinner, action } = {}) {
     b.onclick = action[1];
     el.append(document.createElement('br'), b);
   }
-  right.append(el);
+  comp.append(el);
 }
 
 function hot(i, on) {
@@ -273,11 +285,11 @@ function hot(i, on) {
   bandEls[i].classList.toggle('hot', on);
   for (let k = blocks[i].src[0]; k <= blocks[i].src[1]; k++) pEls[k - 1].classList.toggle('hot', on);
 }
-left.addEventListener('mouseover', e => {
+orig.addEventListener('mouseover', e => {
   const p = e.target.closest('.para');
   if (p && p.dataset.block !== undefined) hot(+p.dataset.block, true);
 });
-left.addEventListener('mouseout', e => {
+orig.addEventListener('mouseout', e => {
   const p = e.target.closest('.para');
   if (p && p.dataset.block !== undefined) hot(+p.dataset.block, false);
 });
@@ -299,14 +311,14 @@ function renderHead() {
 
 // ---------- connectors + scroll sync ----------
 
-// Piecewise-linear map between left and right content coordinates, anchored on block edges.
+// Piecewise-linear map between orig and comp content coordinates, anchored on block edges.
 function buildMap() {
   map = [[0, 0]];
   blocks.forEach((b, i) => {
     const a = pEls[b.src[0] - 1], z = pEls[b.src[1] - 1], r = bEls[i];
     map.push([a.offsetTop, r.offsetTop], [z.offsetTop + z.offsetHeight, r.offsetTop + r.offsetHeight]);
   });
-  map.push([left.scrollHeight, right.scrollHeight]);
+  map.push([orig.scrollHeight, comp.scrollHeight]);
   for (let i = 1; i < map.length; i++) {
     map[i][0] = Math.max(map[i][0], map[i - 1][0]);
     map[i][1] = Math.max(map[i][1], map[i - 1][1]);
@@ -329,7 +341,7 @@ function interp(v, from, to) {
 const expected = new WeakMap();
 function sync(src, dst) {
   if (!blocks.length) return;
-  const from = src === left ? 0 : 1, to = 1 - from;
+  const from = src === orig ? 0 : 1, to = 1 - from;
   const maxS = src.scrollHeight - src.clientHeight;
   const f = maxS > 0 ? src.scrollTop / maxS : 0;
   const y = interp(src.scrollTop + f * src.clientHeight, from, to);
@@ -347,8 +359,8 @@ function onScroll(src, dst) {
     sync(src, dst);
   }, { passive: true });
 }
-onScroll(left, right);
-onScroll(right, left);
+onScroll(orig, comp);
+onScroll(comp, orig);
 
 let drawQueued = false;
 function queueDraw() {
@@ -362,10 +374,11 @@ function draw() {
   blocks.forEach((b, i) => {
     const a = pEls[b.src[0] - 1].getBoundingClientRect(), z = pEls[b.src[1] - 1].getBoundingClientRect();
     const r = bEls[i].getBoundingClientRect();
-    const l1 = a.top - g.top, l2 = z.bottom - g.top, r1 = r.top - g.top, r2 = r.bottom - g.top;
-    if (Math.max(l2, r2) < 0 || Math.min(l1, r1) > g.height) { bandEls[i].setAttribute('d', ''); return; }
+    // p = source paragraphs (far edge of the strip), b = compressed block (near edge)
+    const p1 = a.top - g.top, p2 = z.bottom - g.top, b1 = r.top - g.top, b2 = r.bottom - g.top;
+    if (Math.max(p2, b2) < 0 || Math.min(p1, b1) > g.height) { bandEls[i].setAttribute('d', ''); return; }
     bandEls[i].setAttribute('d',
-      `M0,${l1} C${c},${l1} ${c},${r1} ${w},${r1} L${w},${r2} C${c},${r2} ${c},${l2} 0,${l2} Z`);
+      `M0,${b1} C${c},${b1} ${c},${p1} ${w},${p1} L${w},${p2} C${c},${p2} ${c},${b2} 0,${b2} Z`);
   });
 }
 function relayout() {
@@ -373,7 +386,74 @@ function relayout() {
   buildMap();
   queueDraw();
 }
-new ResizeObserver(() => { relayout(); sync(left, right); }).observe(document.querySelector('main'));
+const panelResize = new ResizeObserver(() => { relayout(); sync(orig, comp); });
+panelResize.observe(orig);
+panelResize.observe(comp);
+
+// ---------- phone: one panel at a time, swipe between them ----------
+
+const mq = matchMedia('(max-width: 720px)');
+const STRIP = 20;          // width of the docked connector strip
+let pos = 0, posAnim = 0;  // 0 = compressed panel active, 1 = original active
+
+// Panels keep a fixed width, so text never reflows mid-swipe; only the connector strip changes,
+// widening halfway through the swipe so the links between the two texts can be inspected.
+function setPos(p) {
+  pos = Math.max(0, Math.min(1, p));
+  if (!mq.matches) { main.style.cssText = ''; return; }
+  const panel = innerWidth - STRIP;
+  const g = STRIP + (Math.min(140, innerWidth * 0.4) - STRIP) * Math.sin(Math.PI * pos);
+  main.style.gridTemplateColumns = `${panel}px ${g}px ${panel}px`;
+  main.style.width = `${2 * panel + g}px`;
+  main.style.transform = `translateX(${-pos * panel}px)`;
+  draw();
+}
+function slideTo(target) {
+  cancelAnimationFrame(posAnim);
+  const from = pos, t0 = performance.now();
+  const step = now => {
+    const k = Math.min(1, (now - t0) / 220);
+    setPos(from + (target - from) * (1 - (1 - k) ** 3));
+    if (k < 1) posAnim = requestAnimationFrame(step);
+  };
+  posAnim = requestAnimationFrame(step);
+}
+
+let swipe = null;
+main.addEventListener('touchstart', e => {
+  swipe = null;
+  if (!mq.matches || e.touches.length !== 1 || document.body.classList.contains('editing')) return;
+  cancelAnimationFrame(posAnim);
+  const t = e.touches[0];
+  swipe = { x: t.clientX, y: t.clientY, pos, axis: null, lastX: t.clientX, lastT: e.timeStamp, v: 0 };
+}, { passive: true });
+main.addEventListener('touchmove', e => {
+  if (!swipe) return;
+  const t = e.touches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+  if (!swipe.axis) {
+    if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) swipe.axis = 'x';
+    else if (Math.abs(dy) > 8) swipe.axis = 'y';
+  }
+  if (swipe.axis !== 'x') return;
+  e.preventDefault();
+  const dt = e.timeStamp - swipe.lastT;
+  if (dt > 0) swipe.v = (t.clientX - swipe.lastX) / dt;
+  swipe.lastX = t.clientX; swipe.lastT = e.timeStamp;
+  setPos(swipe.pos - dx / (innerWidth - STRIP));
+}, { passive: false });
+function endSwipe() {
+  if (!swipe) return;
+  // a flick decides by direction, a slow drag by whichever panel is closer
+  if (pos > 0 && pos < 1) slideTo(swipe.v < -0.3 ? 1 : swipe.v > 0.3 ? 0 : Math.round(pos));
+  swipe = null;
+}
+main.addEventListener('touchend', endSwipe);
+main.addEventListener('touchcancel', endSwipe);
+gutter.addEventListener('click', () => {
+  if (mq.matches && !document.body.classList.contains('editing')) slideTo(pos < 0.5 ? 1 : 0);
+});
+mq.addEventListener('change', () => { setPos(pos); relayout(); });
+addEventListener('resize', () => setPos(pos));
 
 // ---------- OpenRouter ----------
 
@@ -424,8 +504,8 @@ async function show() {
   saveDoc();
   if (!paras.length) return;
   const level = doc.level;
-  if (level === 0) return renderRight(paras.map((p, i) => ({ src: [i + 1, i + 1], text: p })));
-  if (doc.cache[level]) return renderRight(doc.cache[level]);
+  if (level === 0) return renderComp(paras.map((p, i) => ({ src: [i + 1, i + 1], text: p })));
+  if (doc.cache[level]) return renderComp(doc.cache[level]);
   if (!settings.key) return renderMsg('Add your OpenRouter API key to compress text.', { action: ['Open settings', openSettings] });
   renderMsg(`Compressing to “${LEVELS[level].name}”…`, { spinner: true });
   if (pending[level] === gen) return;
@@ -436,7 +516,7 @@ async function show() {
     doc.cache[level] = bs;
     saveDoc();
     renderHead();
-    if (doc.level === level && !document.body.classList.contains('editing')) renderRight(bs);
+    if (doc.level === level && !document.body.classList.contains('editing')) renderComp(bs);
   } catch (e) {
     if (mine === gen && doc.level === level) renderMsg(e.message, { err: true, action: ['Retry', show] });
   } finally {
@@ -461,8 +541,10 @@ function toggleEdit() {
   if (editing) {
     editor.value = doc.text;
     renderMsg('The compressed text will appear here.');
-    $('leftInfo').textContent = '';
+    $('origInfo').textContent = '';
     renderHead();
+    cancelAnimationFrame(posAnim);
+    setPos(1);
     editor.focus();
     return;
   }
@@ -470,9 +552,10 @@ function toggleEdit() {
   if (!text) { toggleEdit(); return; }
   if (text !== doc.text) { doc.text = text; invalidate(); }
   paras = splitParas(doc.text);
-  renderLeft();
-  left.scrollTop = 0;
+  renderOrig();
+  orig.scrollTop = 0;
   show();
+  slideTo(0);
 }
 $('btnEdit').onclick = toggleEdit;
 $('btnIn').onclick = () => setLevel(doc.level - 1);
@@ -512,6 +595,7 @@ $('setSave').onclick = () => {
 editor.value = doc.text;
 renderHead();
 renderMsg('The compressed text will appear here.');
+setPos(1);
 if (doc.text) toggleEdit();
 </script>
 </body>
