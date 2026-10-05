@@ -89,6 +89,8 @@ dialog input, dialog textarea {
 dialog textarea { height: 170px; resize: vertical; }
 dialog .row { display: flex; gap: 8px; margin-top: 16px; }
 dialog small { color: var(--muted); }
+#fetchUrl { margin: 0 0 8px; font: 13px/1.4 ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+#fetchErr { display: block; margin-top: 8px; color: #c0392b; }
 
 /* Phone: one panel at a time; the connector strip stays docked at the edge (widths are set from JS). */
 @media (max-width: 720px) {
@@ -161,6 +163,19 @@ dialog small { color: var(--muted); }
     <span class="spacer"></span>
     <button id="setCancel">Cancel</button>
     <button id="setSave" class="primary">Save</button>
+  </div>
+</dialog>
+
+<dialog id="fetchDlg">
+  <h2>Fetch the text from this URL?</h2>
+  <p id="fetchUrl"></p>
+  <small>The page is fetched through r.jina.ai, which extracts the main text as Markdown.</small>
+  <small id="fetchErr"></small>
+  <div class="row">
+    <span id="fetchBusy" hidden><span class="spin"></span>Fetching…</span>
+    <span class="spacer"></span>
+    <button id="fetchNo">Keep the URL</button>
+    <button id="fetchYes" class="primary">Fetch text</button>
   </div>
 </dialog>
 
@@ -537,6 +552,58 @@ async function show() {
   }
 }
 
+// ---------- URL fetcher ----------
+
+const isUrl = s => /^https?:\/\/\S+$/i.test(s) && URL.canParse(s);
+
+// Jina Reader fetches the page, keeps only the main content and returns it as Markdown.
+async function fetchPage(url) {
+  const res = await fetch('https://r.jina.ai/' + url, {
+    headers: { 'Accept': 'application/json', 'X-Retain-Images': 'none' },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.data) throw new Error(data.readableMessage || data.message || `The reader returned HTTP ${res.status}`);
+  return (data.data.content || '').trim();
+}
+
+// Asks whether to fetch `url`; resolves to the fetched text, or null if the user keeps the URL as it is.
+function askFetch(url) {
+  const dlg = $('fetchDlg'), yes = $('fetchYes'), no = $('fetchNo');
+  $('fetchUrl').textContent = url;
+  $('fetchErr').textContent = '';
+  yes.textContent = 'Fetch text';
+  return new Promise(resolve => {
+    let busy = false;
+    const setBusy = b => { busy = yes.disabled = no.disabled = b; $('fetchBusy').hidden = !b; };
+    const done = v => { setBusy(false); dlg.close(); resolve(v); };
+    setBusy(false);
+    no.onclick = () => done(null);
+    dlg.oncancel = e => { e.preventDefault(); if (!busy) done(null); };
+    yes.onclick = async () => {
+      setBusy(true);
+      $('fetchErr').textContent = '';
+      try { done(await fetchPage(url)); }
+      catch (e) {
+        setBusy(false);
+        $('fetchErr').textContent = `Could not fetch the page: ${e.message}`;
+        yes.textContent = 'Retry';
+      }
+    };
+    dlg.showModal();
+  });
+}
+
+// A pasted URL goes the fetching way; anything else is pasted as usual.
+editor.addEventListener('paste', async e => {
+  const url = (e.clipboardData?.getData('text/plain') || '').trim();
+  if (!isUrl(url)) return;
+  e.preventDefault();
+  const start = editor.selectionStart, end = editor.selectionEnd;
+  const text = await askFetch(url);
+  editor.focus();
+  editor.setRangeText(text ?? url, start, end, 'end');
+});
+
 // ---------- controls ----------
 
 function setLevel(l) {
@@ -547,7 +614,12 @@ function setLevel(l) {
 }
 function invalidate() { doc.cache = {}; gen++; }
 
-function toggleEdit() {
+async function toggleEdit(keepUrl) {
+  // a typed or dropped URL gets the same offer as a pasted one; the fetched text stays in the editor for review
+  if (keepUrl !== true && document.body.classList.contains('editing') && isUrl(editor.value.trim())) {
+    const text = await askFetch(editor.value.trim());
+    if (text !== null) { editor.value = text; editor.focus(); return; }
+  }
   const editing = document.body.classList.toggle('editing');
   $('btnEdit').textContent = editing ? 'Compress' : 'Edit text';
   $('btnEdit').classList.toggle('primary', editing);
@@ -562,7 +634,7 @@ function toggleEdit() {
     return;
   }
   const text = editor.value.trim();
-  if (!text) { toggleEdit(); return; }
+  if (!text) { toggleEdit(true); return; }
   if (text !== doc.text) { doc.text = text; invalidate(); }
   paras = splitParas(doc.text);
   renderOrig();
@@ -570,12 +642,13 @@ function toggleEdit() {
   show();
   slideTo(0);
 }
-$('btnEdit').onclick = toggleEdit;
+$('btnEdit').onclick = () => toggleEdit();
 $('btnIn').onclick = () => setLevel(doc.level - 1);
 $('btnOut').onclick = () => setLevel(doc.level + 1);
 $('btnRegen').onclick = () => { delete doc.cache[doc.level]; show(); };
 
 document.addEventListener('keydown', e => {
+  if ($('fetchDlg').open) return;
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && document.body.classList.contains('editing')) { toggleEdit(); return; }
   if (e.target.matches('input:not([type=range]), textarea') || e.metaKey || e.ctrlKey || e.altKey || $('settings').open) return;
   if (e.key === '+' || e.key === '=') setLevel(doc.level - 1);
@@ -610,7 +683,7 @@ renderHead();
 renderMsg('The compressed text will appear here.');
 placeZoom();
 setPos(1);
-if (doc.text) toggleEdit();
+if (doc.text) toggleEdit(true);
 </script>
 </body>
 </html>
