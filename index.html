@@ -68,6 +68,7 @@ main { display: grid; grid-template-columns: 1fr 72px 1fr; grid-template-rows: a
 }
 body.editing #editor { display: block; }
 body.editing #orig { display: none; }
+body:not(.editing) #btnClear { display: none; }
 .origwrap { min-height: 0; display: grid; }
 .msg { padding: 40px 24px; color: var(--muted); text-align: center; }
 .msg.err { color: #c0392b; }
@@ -138,6 +139,7 @@ dialog small { color: var(--muted); }
   <div class="phead">
     <strong>Original</strong><span id="origInfo"></span>
     <span class="spacer"></span>
+    <button id="btnClear" title="Clear all text">Clear</button>
     <button id="btnEdit" class="primary">Compress</button>
   </div>
 
@@ -176,6 +178,16 @@ dialog small { color: var(--muted); }
     <span class="spacer"></span>
     <button id="fetchNo">Keep the URL</button>
     <button id="fetchYes" class="primary">Fetch text</button>
+  </div>
+</dialog>
+
+<dialog id="clearDlg">
+  <h2>Clear all text?</h2>
+  <small>The original text and its compressed versions will be removed.</small>
+  <div class="row">
+    <span class="spacer"></span>
+    <button id="clearNo">Cancel</button>
+    <button id="clearYes" class="primary">Clear</button>
   </div>
 </dialog>
 
@@ -643,12 +655,22 @@ async function toggleEdit(keepUrl) {
   slideTo(0);
 }
 $('btnEdit').onclick = () => toggleEdit();
+$('btnClear').onclick = () => { if (editor.value || doc.text) $('clearDlg').showModal(); };
+$('clearNo').onclick = () => $('clearDlg').close();
+$('clearYes').onclick = () => {
+  editor.value = doc.text = '';
+  paras = [];
+  invalidate();
+  saveDoc();
+  $('clearDlg').close();
+  editor.focus();
+};
 $('btnIn').onclick = () => setLevel(doc.level - 1);
 $('btnOut').onclick = () => setLevel(doc.level + 1);
 $('btnRegen').onclick = () => { delete doc.cache[doc.level]; show(); };
 
 document.addEventListener('keydown', e => {
-  if ($('fetchDlg').open) return;
+  if ($('fetchDlg').open || $('clearDlg').open) return;
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && document.body.classList.contains('editing')) { toggleEdit(); return; }
   if (e.target.matches('input:not([type=range]), textarea') || e.metaKey || e.ctrlKey || e.altKey || $('settings').open) return;
   if (e.key === '+' || e.key === '=') setLevel(doc.level - 1);
