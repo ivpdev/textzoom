@@ -2,12 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>TextZoom</title>
 <script>
-// set the theme before first paint; the settings dialog changes it later
-try { document.documentElement.dataset.theme = JSON.parse(localStorage.getItem('tz.settings')).theme || 'amber'; }
-catch { document.documentElement.dataset.theme = 'amber'; }
+// set the theme and text size before first paint; the settings dialog changes them later
+{
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem('tz.settings')) || {}; } catch {}
+  document.documentElement.dataset.theme = s.theme || 'amber';
+  document.documentElement.style.setProperty('--fz', s.fontScale || 1);
+}
 </script>
 <style>
 :root {
@@ -61,7 +65,7 @@ main { display: grid; grid-template-columns: 1fr 72px 1fr; grid-template-rows: a
 #gutter path.hot { fill: var(--hot); stroke: var(--hot); fill-opacity: .5; stroke-opacity: 1; }
 
 .para, .block {
-  font: 16px/1.55 Charter, "Iowan Old Style", Georgia, serif;
+  font: calc(16px * var(--fz, 1))/1.55 Charter, "Iowan Old Style", Georgia, serif;
   margin: 0 0 6px; padding: 6px 18px; border: 0 solid transparent;
 }
 .para { border-left-width: 3px; white-space: pre-wrap; }
@@ -75,7 +79,7 @@ main { display: grid; grid-template-columns: 1fr 72px 1fr; grid-template-rows: a
 
 #editor {
   display: none; width: 100%; height: 100%; resize: none; border: 0; outline: 0; padding: 16px 18px;
-  background: var(--panel); color: var(--ink); font: 15px/1.5 Charter, Georgia, serif;
+  background: var(--panel); color: var(--ink); font: calc(15px * var(--fz, 1))/1.5 Charter, Georgia, serif;
 }
 body.editing #editor { display: block; }
 body.editing #orig { display: none; }
@@ -99,6 +103,9 @@ dialog input, dialog textarea, dialog select {
   border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink);
 }
 dialog textarea { height: 170px; resize: vertical; }
+dialog .size { display: flex; align-items: center; gap: 10px; }
+dialog .size input { flex: 1; padding: 0; border: 0; background: none; accent-color: var(--accent); }
+dialog .size output { min-width: 4ch; text-align: right; }
 dialog .row { display: flex; gap: 8px; margin-top: 16px; }
 dialog small { color: var(--muted); }
 #fetchUrl { margin: 0 0 8px; font: 13px/1.4 ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
@@ -123,9 +130,9 @@ dialog small { color: var(--muted); }
 [data-theme="amber"] #gutter path { fill-opacity: .22; stroke-opacity: 1; }
 [data-theme="amber"] #gutter path.b { fill-opacity: .45; }
 [data-theme="amber"] #gutter path.hot { fill: #fff; fill-opacity: 1; stroke: var(--ink); }
-[data-theme="amber"] .para, [data-theme="amber"] .block { font: 14px/1.6 var(--mono); }
+[data-theme="amber"] .para, [data-theme="amber"] .block { font: calc(14px * var(--fz, 1))/1.6 var(--mono); }
 [data-theme="amber"] .para.hot, [data-theme="amber"] .block.hot { background: color-mix(in srgb, var(--bg) 35%, transparent); }
-[data-theme="amber"] #editor { font: 14px/1.6 var(--mono); }
+[data-theme="amber"] #editor { font: calc(14px * var(--fz, 1))/1.6 var(--mono); }
 [data-theme="amber"] .spin { border-color: color-mix(in srgb, var(--ink) 25%, transparent); border-top-color: var(--ink); }
 [data-theme="amber"] .zoom input { accent-color: var(--ink); }
 [data-theme="amber"] dialog { background: var(--bg); border-radius: 6px; padding: 0 20px 20px; }
@@ -145,6 +152,8 @@ dialog small { color: var(--muted); }
   html, body { overflow: hidden; }
   body { height: 100dvh; }
   header.top .hint { display: none; }
+  /* iOS zooms the page into any focused field with text under 16px */
+  dialog input, dialog textarea, dialog select { font-size: 16px; }
   /* zoom control floats over the text, bottom corner, zoom-in at the top */
   .zoom {
     position: fixed; right: 58px; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 5;
@@ -227,6 +236,12 @@ dialog small { color: var(--muted); }
     <option value="amber">Amber (default)</option>
     <option value="mild">Mild</option>
   </select>
+  <label>Text size</label>
+  <div class="size">
+    <input id="setSize" type="range" min="70" max="200" step="5" aria-label="Text size">
+    <output id="setSizeOut"></output>
+  </div>
+  <small>You can also pinch with two fingers, or use Ctrl + scroll on a computer.</small>
   <label>Model</label>
   <input id="setModel" placeholder="anthropic/claude-sonnet-4.5">
   <label>System prompt</label>
@@ -289,7 +304,7 @@ const orig = $('orig'), comp = $('comp'), main = $('main'), gutter = $('gutter')
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
-let settings = Object.assign({ key: '', model: DEFAULT_MODEL, prompt: DEFAULT_PROMPT, theme: 'amber' }, load('tz.settings', {}));
+let settings = Object.assign({ key: '', model: DEFAULT_MODEL, prompt: DEFAULT_PROMPT, theme: 'amber', fontScale: 1 }, load('tz.settings', {}));
 let doc = Object.assign({ text: '', level: 2, cache: {} }, load('tz.doc', {}));
 let paras = [], blocks = [], pEls = [], bEls = [], bandEls = [], map = [];
 let gen = 0;               // bumped whenever cached results become stale
@@ -577,6 +592,7 @@ function slideTo(target) {
 
 let swipe = null;
 main.addEventListener('touchstart', e => {
+  if (swipe && e.touches.length > 1) endSwipe();  // a second finger turns a swipe into a pinch
   swipe = null;
   if (!mq.matches || e.touches.length !== 1 || document.body.classList.contains('editing')) return;
   cancelAnimationFrame(posAnim);
@@ -614,6 +630,65 @@ function placeZoom() {
 }
 mq.addEventListener('change', () => { placeZoom(); setPos(pos); relayout(); });
 addEventListener('resize', () => setPos(pos));
+
+// ---------- text size: settings slider, two-finger pinch, ⌘/Ctrl + wheel ----------
+
+const FZ_MIN = 0.7, FZ_MAX = 2;
+function setFontScale(z) {
+  z = Math.round(Math.max(FZ_MIN, Math.min(FZ_MAX, z)) * 100) / 100;
+  const root = document.documentElement;
+  if (+root.style.getPropertyValue('--fz') === z) return z;
+  // keep the reading position: the visible panel stays at the same fraction of its text
+  const el = mq.matches ? activePanel() : orig, max = el.scrollHeight - el.clientHeight;
+  const f = max > 0 ? el.scrollTop / max : 0;
+  root.style.setProperty('--fz', z);
+  el.scrollTop = f * (el.scrollHeight - el.clientHeight);
+  relayout();
+  sync(el, el === orig ? comp : orig);
+  return z;
+}
+function saveFontScale(z) {
+  settings.fontScale = z;
+  save('tz.settings', settings);
+}
+
+let pinch = null;
+const fingerGap = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+document.addEventListener('touchstart', e => {
+  if (e.touches.length !== 2 || document.querySelector('dialog[open]')) return;
+  pinch = { d: fingerGap(e.touches), z: settings.fontScale };
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  settings.fontScale = setFontScale(pinch.z * fingerGap(e.touches) / pinch.d);
+}, { passive: false });
+function endPinch(e) {
+  if (!pinch || e.touches.length >= 2) return;
+  pinch = null;
+  saveFontScale(settings.fontScale);
+}
+document.addEventListener('touchend', endPinch);
+document.addEventListener('touchcancel', endPinch);
+// Safari: stop the native page zoom (iOS ignores maximum-scale for pinches); macOS trackpad pinches resize the text
+for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(type, e => {
+    e.preventDefault();
+    if (pinch || document.querySelector('dialog[open]')) return;
+    if (type === 'gesturestart') pinch = { z: settings.fontScale, gesture: true };
+    else if (pinch?.gesture) settings.fontScale = setFontScale(pinch.z * e.scale);
+    if (type === 'gestureend' && pinch?.gesture) { pinch = null; saveFontScale(settings.fontScale); }
+  });
+}
+// Chrome/Firefox report trackpad pinches (and Ctrl + wheel) as wheel events with ctrlKey
+let wheelSave = 0;
+addEventListener('wheel', e => {
+  if (!e.ctrlKey || document.querySelector('dialog[open]')) return;
+  e.preventDefault();
+  settings.fontScale = setFontScale(settings.fontScale * Math.exp(-e.deltaY / 200));
+  clearTimeout(wheelSave);
+  wheelSave = setTimeout(() => saveFontScale(settings.fontScale), 300);
+}, { passive: false });
 
 // ---------- OpenRouter ----------
 
@@ -802,6 +877,8 @@ function openSettings() {
   $('setModel').value = settings.model;
   $('setPrompt').value = settings.prompt;
   $('setTheme').value = settings.theme;
+  $('setSize').value = Math.round(settings.fontScale * 100);
+  $('setSizeOut').value = $('setSize').value + '%';
   $('settings').showModal();
 }
 $('btnSettings').onclick = openSettings;
@@ -809,7 +886,8 @@ $('setCancel').onclick = () => $('settings').close();
 // the theme previews as soon as it is picked; closing without saving puts the saved one back
 const applyTheme = t => { document.documentElement.dataset.theme = t; relayout(); };
 $('setTheme').onchange = () => applyTheme($('setTheme').value);
-$('settings').addEventListener('close', () => applyTheme(settings.theme));
+$('setSize').oninput = () => { $('setSizeOut').value = $('setSize').value + '%'; setFontScale($('setSize').value / 100); };
+$('settings').addEventListener('close', () => { applyTheme(settings.theme); setFontScale(settings.fontScale); });
 $('setReset').onclick = () => { $('setPrompt').value = DEFAULT_PROMPT; };
 $('setSave').onclick = () => {
   const next = {
@@ -817,6 +895,7 @@ $('setSave').onclick = () => {
     model: $('setModel').value.trim() || DEFAULT_MODEL,
     prompt: $('setPrompt').value.trim() || DEFAULT_PROMPT,
     theme: $('setTheme').value,
+    fontScale: $('setSize').value / 100,
   };
   if (next.model !== settings.model || next.prompt !== settings.prompt) invalidate();
   settings = next;
